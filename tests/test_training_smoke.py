@@ -35,6 +35,12 @@ def test_build_model_applies_tunable_proposal_parameters() -> None:
             "score_thresh": 0.25,
             "detections_per_image": 33,
             "postprocess_nms": "soft",
+            "rpn_fg_iou_thresh": 0.5,
+            "rpn_bg_iou_thresh": 0.2,
+            "detector_fg_iou_thresh": 0.4,
+            "detector_bg_iou_thresh": 0.1,
+            "detector_batch_size_per_image": 64,
+            "detector_positive_fraction": 0.5,
         },
     )()
 
@@ -47,3 +53,9 @@ def test_build_model_applies_tunable_proposal_parameters() -> None:
     assert model.rpn.anchor_generator.sizes == (16, 32)
     assert model.score_thresh == 0.25
     assert model.postprocess_nms == "soft"
+    assert model.rpn.fg_iou_thresh == 0.5
+    assert model.rpn.bg_iou_thresh == 0.2
+    assert model.detector_head.fg_iou_thresh == 0.4
+    assert model.detector_head.bg_iou_thresh == 0.1
+    assert model.detector_head.batch_size_per_image == 64
+    assert model.detector_head.positive_fraction == 0.5

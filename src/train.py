@@ -46,6 +46,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--detections-per-image", type=int, default=100)
     parser.add_argument("--anchor-sizes", default="16,32,64")
     parser.add_argument("--postprocess-nms", choices=("hard", "soft"), default="hard")
+    parser.add_argument("--rpn-fg-iou-thresh", type=float, default=0.7)
+    parser.add_argument("--rpn-bg-iou-thresh", type=float, default=0.3)
+    parser.add_argument("--detector-fg-iou-thresh", type=float, default=0.5)
+    parser.add_argument("--detector-bg-iou-thresh", type=float, default=0.5)
+    parser.add_argument("--detector-batch-size-per-image", type=int, default=256)
+    parser.add_argument("--detector-positive-fraction", type=float, default=0.25)
+    parser.add_argument("--hflip-prob", type=float, default=0.0)
     parser.add_argument("--train-limit", type=int, default=0)
     parser.add_argument("--no-shuffle", action="store_true")
     return parser.parse_args()
@@ -108,6 +115,12 @@ def model_config_from_args(args: argparse.Namespace) -> dict[str, object]:
         "score_thresh": args.score_thresh,
         "detections_per_image": args.detections_per_image,
         "postprocess_nms": args.postprocess_nms,
+        "rpn_fg_iou_thresh": args.rpn_fg_iou_thresh,
+        "rpn_bg_iou_thresh": args.rpn_bg_iou_thresh,
+        "detector_fg_iou_thresh": args.detector_fg_iou_thresh,
+        "detector_bg_iou_thresh": args.detector_bg_iou_thresh,
+        "detector_batch_size_per_image": args.detector_batch_size_per_image,
+        "detector_positive_fraction": args.detector_positive_fraction,
     }
 
 
@@ -300,7 +313,12 @@ def evaluate_model(
 
 def train_one_smoke_step(args: argparse.Namespace) -> dict[str, float]:
     device = resolve_device(args.device)
-    dataset = GWHDDetectionDataset(args.data_root, split=args.split, image_size=args.image_size)
+    dataset = GWHDDetectionDataset(
+        args.data_root,
+        split=args.split,
+        image_size=args.image_size,
+        hflip_prob=args.hflip_prob,
+    )
     dataset = limit_dataset(dataset, args.train_limit)
     loader = create_data_loader(dataset, args=args, device=device)
     val_loader = None
@@ -323,65 +341,69 @@ def train_one_smoke_step(args: argparse.Namespace) -> dict[str, float]:
 
     last_losses: dict[str, torch.Tensor] = {}
     try:
-        for step, (images, targets) in enumerate(loader):
-            if step >= args.max_steps:
-                break
-            last_step = step + 1
-            timer.mark_batch_loaded()
-            images = images.to(device, non_blocking=True)
-            if args.channels_last:
-                images = images.contiguous(memory_format=torch.channels_last)
-            targets = move_targets_to_device(targets, device)
-            optimizer.zero_grad(set_to_none=True)
-            with torch.amp.autocast("cuda", enabled=should_use_amp(device, args.amp)):
-                losses = model(images, targets)
-                loss = sum(losses.values())
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            last_losses = {name: value.detach() for name, value in losses.items()}
-            sync_device_for_timing(device, args.sync_timing)
-            timer.mark_step_done(batch_size=images.shape[0])
+        while last_step < args.max_steps:
+            for images, targets in loader:
+                if last_step >= args.max_steps:
+                    break
+                current_step = last_step + 1
+                last_step = current_step
+                timer.mark_batch_loaded()
+                images = images.to(device, non_blocking=True)
+                if args.channels_last:
+                    images = images.contiguous(memory_format=torch.channels_last)
+                targets = move_targets_to_device(targets, device)
+                optimizer.zero_grad(set_to_none=True)
+                with torch.amp.autocast("cuda", enabled=should_use_amp(device, args.amp)):
+                    losses = model(images, targets)
+                    loss = sum(losses.values())
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+                last_losses = {name: value.detach() for name, value in losses.items()}
+                sync_device_for_timing(device, args.sync_timing)
+                timer.mark_step_done(batch_size=images.shape[0])
 
-            should_log = args.log_interval > 0 and ((step + 1) % args.log_interval == 0 or step + 1 == args.max_steps)
-            eval_metrics: dict[str, float] = {}
-            if val_loader is not None and ((step + 1) % args.eval_interval == 0 or step + 1 == args.max_steps):
-                eval_metrics = evaluate_model(
-                    model,
-                    val_loader,
-                    device,
-                    max_batches=args.val_max_batches,
-                    iou_threshold=args.eval_iou_thresh,
-                    score_threshold=args.eval_score_thresh,
-                )
-                current_metric = eval_metrics["val_f1"]
-                save_checkpoint(
-                    args.run_dir / "last.pt",
-                    model=model,
-                    optimizer=optimizer,
-                    step=step + 1,
-                    metric=current_metric,
-                    model_config=model_config,
-                )
-                if current_metric > best_metric:
-                    best_metric = current_metric
+                should_log = args.log_interval > 0 and (current_step % args.log_interval == 0 or current_step == args.max_steps)
+                eval_metrics: dict[str, float] = {}
+                if val_loader is not None and (current_step % args.eval_interval == 0 or current_step == args.max_steps):
+                    eval_metrics = evaluate_model(
+                        model,
+                        val_loader,
+                        device,
+                        max_batches=args.val_max_batches,
+                        iou_threshold=args.eval_iou_thresh,
+                        score_threshold=args.eval_score_thresh,
+                    )
+                    current_metric = eval_metrics["val_f1"]
                     save_checkpoint(
-                        args.run_dir / "best.pt",
+                        args.run_dir / "last.pt",
                         model=model,
                         optimizer=optimizer,
-                        step=step + 1,
+                        step=current_step,
                         metric=current_metric,
                         model_config=model_config,
                     )
-            if should_log:
-                metrics = {"step": float(step + 1), "lr": optimizer.param_groups[0]["lr"]}
-                metrics.update(timer.metrics())
-                metrics.update(detached_loss_metrics(losses, loss))
-                metrics.update(eval_metrics)
-                memory_mb = gpu_memory_mb(device)
-                if memory_mb is not None:
-                    metrics["gpu_mem_mb"] = memory_mb
-                logger.log(metrics)
+                    if current_metric > best_metric:
+                        best_metric = current_metric
+                        save_checkpoint(
+                            args.run_dir / "best.pt",
+                            model=model,
+                            optimizer=optimizer,
+                            step=current_step,
+                            metric=current_metric,
+                            model_config=model_config,
+                        )
+                if should_log:
+                    metrics = {"step": float(current_step), "lr": optimizer.param_groups[0]["lr"]}
+                    metrics.update(timer.metrics())
+                    metrics.update(detached_loss_metrics(losses, loss))
+                    metrics.update(eval_metrics)
+                    memory_mb = gpu_memory_mb(device)
+                    if memory_mb is not None:
+                        metrics["gpu_mem_mb"] = memory_mb
+                    logger.log(metrics)
+            if len(loader) == 0:
+                break
     except torch.cuda.OutOfMemoryError as exc:
         if device.type == "cuda":
             torch.cuda.empty_cache()

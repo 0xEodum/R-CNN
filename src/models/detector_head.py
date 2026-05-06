@@ -15,10 +15,22 @@ class DetectorHead(nn.Module):
         hidden_dim: int = 256,
         num_classes: int = 2,
         fg_iou_thresh: float = 0.5,
+        bg_iou_thresh: float = 0.5,
+        batch_size_per_image: int = 256,
+        positive_fraction: float = 0.25,
     ) -> None:
         super().__init__()
+        if not 0.0 <= bg_iou_thresh <= fg_iou_thresh <= 1.0:
+            raise ValueError("Expected 0.0 <= bg_iou_thresh <= fg_iou_thresh <= 1.0")
+        if batch_size_per_image <= 0:
+            raise ValueError("batch_size_per_image must be positive")
+        if not 0.0 <= positive_fraction <= 1.0:
+            raise ValueError("positive_fraction must be between 0.0 and 1.0")
         self.num_classes = num_classes
         self.fg_iou_thresh = fg_iou_thresh
+        self.bg_iou_thresh = bg_iou_thresh
+        self.batch_size_per_image = batch_size_per_image
+        self.positive_fraction = positive_fraction
         input_dim = in_channels * pooled_size[0] * pooled_size[1]
         self.layers = nn.Sequential(
             nn.Flatten(),
@@ -44,24 +56,48 @@ class DetectorHead(nn.Module):
         targets: list[dict[str, torch.Tensor]],
     ) -> dict[str, torch.Tensor]:
         labels, regression_targets = self._assign_targets(proposals, targets, class_logits.device)
-        if labels.numel() == 0:
+        sampled = self._sample_rois(labels, [proposal.shape[0] for proposal in proposals])
+        if sampled.numel() == 0:
             return {
                 "detector_cls": class_logits.sum() * 0.0,
                 "detector_box_reg": box_deltas.sum() * 0.0,
             }
 
-        cls_loss = F.cross_entropy(class_logits, labels)
-        positive = torch.where(labels > 0)[0]
+        sampled_labels = labels[sampled]
+        cls_loss = F.cross_entropy(class_logits[sampled], sampled_labels)
+        positive = torch.where(sampled_labels > 0)[0]
         if positive.numel() > 0:
+            positive_indices = sampled[positive]
             box_loss = F.smooth_l1_loss(
-                box_deltas[positive, labels[positive]],
-                regression_targets[positive],
+                box_deltas[positive_indices, sampled_labels[positive]],
+                regression_targets[positive_indices],
                 beta=1.0 / 9.0,
                 reduction="sum",
-            ) / labels.numel()
+            ) / sampled_labels.numel()
         else:
             box_loss = box_deltas.sum() * 0.0
         return {"detector_cls": cls_loss, "detector_box_reg": box_loss}
+
+    def _sample_rois(self, labels: torch.Tensor, proposal_counts: list[int]) -> torch.Tensor:
+        sampled_indices: list[torch.Tensor] = []
+        start = 0
+        for count in proposal_counts:
+            end = start + count
+            image_labels = labels[start:end]
+            positive = torch.where(image_labels > 0)[0] + start
+            negative = torch.where(image_labels == 0)[0] + start
+            num_pos = min(int(self.batch_size_per_image * self.positive_fraction), positive.numel())
+            num_neg = min(self.batch_size_per_image - num_pos, negative.numel())
+
+            if num_pos > 0:
+                sampled_indices.append(positive[torch.randperm(positive.numel(), device=labels.device)[:num_pos]])
+            if num_neg > 0:
+                sampled_indices.append(negative[torch.randperm(negative.numel(), device=labels.device)[:num_neg]])
+            start = end
+
+        if not sampled_indices:
+            return torch.empty((0,), dtype=torch.long, device=labels.device)
+        return torch.cat(sampled_indices, dim=0)
 
     def _assign_targets(
         self,
@@ -83,7 +119,9 @@ class DetectorHead(nn.Module):
 
             quality = box_iou(image_proposals, gt_boxes)
             matched_vals, matched_idxs = quality.max(dim=1)
-            labels = (matched_vals >= self.fg_iou_thresh).to(dtype=torch.long)
+            labels = torch.full((image_proposals.shape[0],), -1, dtype=torch.long, device=device)
+            labels[matched_vals < self.bg_iou_thresh] = 0
+            labels[matched_vals >= self.fg_iou_thresh] = 1
             matched_boxes = gt_boxes[matched_idxs]
             regression_targets = encode_boxes(matched_boxes, image_proposals)
             all_labels.append(labels)

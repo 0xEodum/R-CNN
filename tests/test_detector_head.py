@@ -26,3 +26,47 @@ def test_detector_head_losses_backpropagate() -> None:
 
     assert set(losses) == {"detector_cls", "detector_box_reg"}
     assert pooled.grad is not None
+
+
+def test_detector_head_uses_ignore_band_for_ambiguous_rois() -> None:
+    head = DetectorHead(
+        in_channels=4,
+        pooled_size=(2, 2),
+        hidden_dim=16,
+        num_classes=2,
+        fg_iou_thresh=0.5,
+        bg_iou_thresh=0.3,
+    )
+    proposals = [
+        torch.tensor(
+            [
+                [0.0, 0.0, 10.0, 10.0],
+                [0.0, 0.0, 7.0, 7.0],
+                [20.0, 20.0, 30.0, 30.0],
+            ]
+        )
+    ]
+    targets = [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.ones(1, dtype=torch.int64)}]
+
+    labels, _ = head._assign_targets(proposals, targets, device=torch.device("cpu"))
+
+    assert torch.equal(labels, torch.tensor([1, -1, 0]))
+
+
+def test_detector_head_samples_balanced_positive_and_negative_rois() -> None:
+    head = DetectorHead(
+        in_channels=4,
+        pooled_size=(2, 2),
+        hidden_dim=16,
+        num_classes=2,
+        batch_size_per_image=4,
+        positive_fraction=0.5,
+    )
+    labels = torch.tensor([1, 1, 1, 0, 0, 0, -1, -1])
+
+    sampled = head._sample_rois(labels, proposal_counts=[labels.numel()])
+
+    assert sampled.numel() == 4
+    assert int((labels[sampled] == 1).sum()) == 2
+    assert int((labels[sampled] == 0).sum()) == 2
+    assert not torch.any(labels[sampled] == -1)

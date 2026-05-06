@@ -49,15 +49,19 @@ class GWHDDetectionDataset(Dataset):
         data_root: str | Path,
         split: str = "train",
         image_size: int | None = 512,
+        hflip_prob: float = 0.0,
     ) -> None:
         if split not in SPLIT_TO_CSV:
             valid = ", ".join(sorted(SPLIT_TO_CSV))
             raise ValueError(f"Unknown split {split!r}; expected one of: {valid}")
+        if not 0.0 <= hflip_prob <= 1.0:
+            raise ValueError("hflip_prob must be between 0.0 and 1.0")
 
         self.data_root = Path(data_root)
         self.images_dir = self.data_root / "images"
         self.csv_path = self.data_root / SPLIT_TO_CSV[split]
         self.image_size = image_size
+        self.hflip_prob = hflip_prob
 
         if not self.csv_path.exists():
             raise FileNotFoundError(f"GWHD annotation CSV not found: {self.csv_path}")
@@ -108,6 +112,12 @@ class GWHDDetectionDataset(Dataset):
             boxes = boxes * scale
             boxes[:, 0::2].clamp_(min=0.0, max=float(width))
             boxes[:, 1::2].clamp_(min=0.0, max=float(height))
+        if self.hflip_prob > 0.0 and torch.rand(()) < self.hflip_prob:
+            image_tensor = torch.flip(image_tensor, dims=(2,))
+            if boxes.numel() > 0:
+                flipped_x1 = float(width) - boxes[:, 2]
+                flipped_x2 = float(width) - boxes[:, 0]
+                boxes = torch.stack((flipped_x1, boxes[:, 1], flipped_x2, boxes[:, 3]), dim=1)
 
         target = {
             "boxes": boxes,

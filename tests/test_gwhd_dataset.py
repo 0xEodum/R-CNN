@@ -57,6 +57,23 @@ def test_dataset_loads_sorted_rows_and_scales_boxes(tmp_path: Path) -> None:
     assert torch.equal(target["labels"], torch.ones(2, dtype=torch.int64))
 
 
+def test_dataset_can_apply_horizontal_flip_to_image_and_boxes(tmp_path: Path) -> None:
+    data_root = tmp_path / "gwhd"
+    images_dir = data_root / "images"
+    images_dir.mkdir(parents=True)
+    _write_image(images_dir / "sample.png")
+    (data_root / "competition_train.csv").write_text(
+        "image_name,BoxesString,domain\n"
+        "sample.png,100 200 300 400,domain_a\n",
+        encoding="utf-8",
+    )
+
+    dataset = GWHDDetectionDataset(data_root, split="train", image_size=256, hflip_prob=1.0)
+    _, target = dataset[0]
+
+    assert torch.allclose(target["boxes"], torch.tensor([[181.0, 50.0, 231.0, 100.0]]))
+
+
 def test_dataset_reports_missing_files(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="competition_train.csv"):
         GWHDDetectionDataset(tmp_path, split="train")

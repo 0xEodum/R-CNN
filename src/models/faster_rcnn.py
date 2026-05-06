@@ -24,6 +24,12 @@ class FasterRCNN(nn.Module):
         score_thresh: float = 0.05,
         detections_per_image: int = 50,
         postprocess_nms: str = "hard",
+        rpn_fg_iou_thresh: float = 0.7,
+        rpn_bg_iou_thresh: float = 0.3,
+        detector_fg_iou_thresh: float = 0.5,
+        detector_bg_iou_thresh: float = 0.5,
+        detector_batch_size_per_image: int = 256,
+        detector_positive_fraction: float = 0.25,
     ) -> None:
         super().__init__()
         if postprocess_nms not in {"hard", "soft"}:
@@ -33,6 +39,8 @@ class FasterRCNN(nn.Module):
         self.rpn = RegionProposalNetwork(
             in_channels=backbone_channels,
             anchor_generator=anchor_generator,
+            fg_iou_thresh=rpn_fg_iou_thresh,
+            bg_iou_thresh=rpn_bg_iou_thresh,
             pre_nms_top_n=rpn_pre_nms_top_n,
             post_nms_top_n=rpn_post_nms_top_n,
         )
@@ -43,6 +51,10 @@ class FasterRCNN(nn.Module):
             pooled_size=pooled_size,
             hidden_dim=hidden_dim,
             num_classes=num_classes,
+            fg_iou_thresh=detector_fg_iou_thresh,
+            bg_iou_thresh=detector_bg_iou_thresh,
+            batch_size_per_image=detector_batch_size_per_image,
+            positive_fraction=detector_positive_fraction,
         )
         self.num_classes = num_classes
         self.score_thresh = score_thresh
