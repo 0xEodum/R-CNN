@@ -1,0 +1,1 @@
+"""ClassicDetection source package."""
