@@ -93,3 +93,36 @@ def test_detector_head_assigns_matched_target_classes_for_multiclass_data() -> N
     labels, _ = head._assign_targets(proposals, targets, device=torch.device("cpu"))
 
     assert torch.equal(labels, torch.tensor([2, 5, 0]))
+
+
+def test_detector_head_uses_configured_class_weights_for_classification_loss() -> None:
+    head = DetectorHead(
+        in_channels=4,
+        pooled_size=(2, 2),
+        hidden_dim=16,
+        num_classes=3,
+        class_weights=(1.0, 2.0, 4.0),
+    )
+    assert torch.equal(head.class_weights, torch.tensor([1.0, 2.0, 4.0]))
+
+
+def test_detector_head_balances_positive_samples_across_classes() -> None:
+    head = DetectorHead(
+        in_channels=4,
+        pooled_size=(2, 2),
+        hidden_dim=16,
+        num_classes=4,
+        batch_size_per_image=6,
+        positive_fraction=0.5,
+        balanced_positive_classes=True,
+    )
+    labels = torch.tensor([1, 1, 1, 1, 1, 2, 3, 0, 0, 0])
+
+    sampled = head._sample_rois(labels, proposal_counts=[labels.numel()])
+
+    sampled_labels = labels[sampled]
+    assert sampled.numel() == 6
+    assert int((sampled_labels == 1).sum()) == 1
+    assert int((sampled_labels == 2).sum()) == 1
+    assert int((sampled_labels == 3).sum()) == 1
+    assert int((sampled_labels == 0).sum()) == 3

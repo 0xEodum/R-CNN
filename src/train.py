@@ -54,6 +54,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--detector-bg-iou-thresh", type=float, default=0.5)
     parser.add_argument("--detector-batch-size-per-image", type=int, default=256)
     parser.add_argument("--detector-positive-fraction", type=float, default=0.25)
+    parser.add_argument("--detector-class-weights", default="")
+    parser.add_argument("--detector-balanced-positive-classes", action="store_true")
     parser.add_argument("--hflip-prob", type=float, default=0.0)
     parser.add_argument("--train-limit", type=int, default=0)
     parser.add_argument("--no-shuffle", action="store_true")
@@ -106,6 +108,15 @@ def parse_anchor_sizes(value: str) -> tuple[int, ...]:
     return sizes
 
 
+def parse_detector_class_weights(value: str) -> tuple[float, ...] | None:
+    if not value.strip():
+        return None
+    weights = tuple(float(item.strip()) for item in value.split(",") if item.strip())
+    if not weights:
+        return None
+    return weights
+
+
 def model_config_from_args(args: argparse.Namespace) -> dict[str, object]:
     return {
         "num_classes": resolve_num_classes(args),
@@ -124,6 +135,8 @@ def model_config_from_args(args: argparse.Namespace) -> dict[str, object]:
         "detector_bg_iou_thresh": args.detector_bg_iou_thresh,
         "detector_batch_size_per_image": args.detector_batch_size_per_image,
         "detector_positive_fraction": args.detector_positive_fraction,
+        "detector_class_weights": parse_detector_class_weights(getattr(args, "detector_class_weights", "")),
+        "detector_balanced_positive_classes": bool(getattr(args, "detector_balanced_positive_classes", False)),
     }
 
 

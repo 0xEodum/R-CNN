@@ -30,6 +30,8 @@ class FasterRCNN(nn.Module):
         detector_bg_iou_thresh: float = 0.5,
         detector_batch_size_per_image: int = 256,
         detector_positive_fraction: float = 0.25,
+        detector_class_weights: tuple[float, ...] | None = None,
+        detector_balanced_positive_classes: bool = False,
     ) -> None:
         super().__init__()
         if postprocess_nms not in {"hard", "soft"}:
@@ -55,6 +57,8 @@ class FasterRCNN(nn.Module):
             bg_iou_thresh=detector_bg_iou_thresh,
             batch_size_per_image=detector_batch_size_per_image,
             positive_fraction=detector_positive_fraction,
+            class_weights=detector_class_weights,
+            balanced_positive_classes=detector_balanced_positive_classes,
         )
         self.num_classes = num_classes
         self.score_thresh = score_thresh

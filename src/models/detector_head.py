@@ -18,6 +18,8 @@ class DetectorHead(nn.Module):
         bg_iou_thresh: float = 0.5,
         batch_size_per_image: int = 256,
         positive_fraction: float = 0.25,
+        class_weights: tuple[float, ...] | None = None,
+        balanced_positive_classes: bool = False,
     ) -> None:
         super().__init__()
         if not 0.0 <= bg_iou_thresh <= fg_iou_thresh <= 1.0:
@@ -31,6 +33,11 @@ class DetectorHead(nn.Module):
         self.bg_iou_thresh = bg_iou_thresh
         self.batch_size_per_image = batch_size_per_image
         self.positive_fraction = positive_fraction
+        self.balanced_positive_classes = balanced_positive_classes
+        if class_weights is not None and len(class_weights) != num_classes:
+            raise ValueError("class_weights length must match num_classes")
+        weights_tensor = torch.tensor(class_weights or (), dtype=torch.float32)
+        self.register_buffer("class_weights", weights_tensor, persistent=False)
         input_dim = in_channels * pooled_size[0] * pooled_size[1]
         self.layers = nn.Sequential(
             nn.Flatten(),
@@ -64,7 +71,8 @@ class DetectorHead(nn.Module):
             }
 
         sampled_labels = labels[sampled]
-        cls_loss = F.cross_entropy(class_logits[sampled], sampled_labels)
+        class_weights = self.class_weights.to(device=class_logits.device) if self.class_weights.numel() > 0 else None
+        cls_loss = F.cross_entropy(class_logits[sampled], sampled_labels, weight=class_weights)
         positive = torch.where(sampled_labels > 0)[0]
         if positive.numel() > 0:
             positive_indices = sampled[positive]
@@ -90,7 +98,10 @@ class DetectorHead(nn.Module):
             num_neg = min(self.batch_size_per_image - num_pos, negative.numel())
 
             if num_pos > 0:
-                sampled_indices.append(positive[torch.randperm(positive.numel(), device=labels.device)[:num_pos]])
+                if self.balanced_positive_classes:
+                    sampled_indices.append(self._sample_balanced_positive_rois(labels, positive, num_pos))
+                else:
+                    sampled_indices.append(positive[torch.randperm(positive.numel(), device=labels.device)[:num_pos]])
             if num_neg > 0:
                 sampled_indices.append(negative[torch.randperm(negative.numel(), device=labels.device)[:num_neg]])
             start = end
@@ -98,6 +109,32 @@ class DetectorHead(nn.Module):
         if not sampled_indices:
             return torch.empty((0,), dtype=torch.long, device=labels.device)
         return torch.cat(sampled_indices, dim=0)
+
+    @staticmethod
+    def _sample_balanced_positive_rois(labels: torch.Tensor, positive: torch.Tensor, num_pos: int) -> torch.Tensor:
+        positive_labels = labels[positive]
+        classes = positive_labels.unique(sorted=True)
+        if classes.numel() == 0:
+            return torch.empty((0,), dtype=torch.long, device=labels.device)
+
+        per_class = max(1, num_pos // int(classes.numel()))
+        selected: list[torch.Tensor] = []
+        selected_mask = torch.zeros((positive.shape[0],), dtype=torch.bool, device=labels.device)
+        for class_label in classes:
+            class_positions = torch.where(positive_labels == class_label)[0]
+            quota = min(per_class, class_positions.numel())
+            choice = class_positions[torch.randperm(class_positions.numel(), device=labels.device)[:quota]]
+            selected_mask[choice] = True
+            selected.append(positive[choice])
+
+        remaining_slots = num_pos - sum(item.numel() for item in selected)
+        if remaining_slots > 0:
+            remaining = positive[~selected_mask]
+            if remaining.numel() > 0:
+                fill = remaining[torch.randperm(remaining.numel(), device=labels.device)[:remaining_slots]]
+                selected.append(fill)
+
+        return torch.cat(selected, dim=0)[:num_pos]
 
     def _assign_targets(
         self,
