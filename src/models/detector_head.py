@@ -117,11 +117,20 @@ class DetectorHead(nn.Module):
                 all_regression_targets.append(torch.zeros_like(image_proposals))
                 continue
 
+            gt_labels = target.get("labels")
+            if gt_labels is None:
+                gt_labels = torch.ones((gt_boxes.shape[0],), dtype=torch.long, device=device)
+            else:
+                gt_labels = gt_labels.to(device=device, dtype=torch.long)
+            if torch.any(gt_labels <= 0) or torch.any(gt_labels >= self.num_classes):
+                raise ValueError(f"Target labels must be in [1, {self.num_classes - 1}] for this detector")
+
             quality = box_iou(image_proposals, gt_boxes)
             matched_vals, matched_idxs = quality.max(dim=1)
             labels = torch.full((image_proposals.shape[0],), -1, dtype=torch.long, device=device)
             labels[matched_vals < self.bg_iou_thresh] = 0
-            labels[matched_vals >= self.fg_iou_thresh] = 1
+            foreground = matched_vals >= self.fg_iou_thresh
+            labels[foreground] = gt_labels[matched_idxs[foreground]]
             matched_boxes = gt_boxes[matched_idxs]
             regression_targets = encode_boxes(matched_boxes, image_proposals)
             all_labels.append(labels)

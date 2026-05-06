@@ -25,11 +25,14 @@ def match_image_detections(
 ) -> DetectionStats:
     pred_boxes = prediction["boxes"].detach().cpu()
     pred_scores = prediction["scores"].detach().cpu()
+    pred_labels = prediction.get("labels", torch.ones((pred_boxes.shape[0],), dtype=torch.int64)).detach().cpu()
     target_boxes = target["boxes"].detach().cpu()
+    target_labels = target.get("labels", torch.ones((target_boxes.shape[0],), dtype=torch.int64)).detach().cpu()
 
     keep = pred_scores >= score_threshold
     pred_boxes = pred_boxes[keep]
     pred_scores = pred_scores[keep]
+    pred_labels = pred_labels[keep]
     if target_boxes.numel() == 0:
         return DetectionStats(tp=0, fp=int(pred_boxes.shape[0]), fn=0)
     if pred_boxes.numel() == 0:
@@ -41,7 +44,9 @@ def match_image_detections(
     tp = 0
     fp = 0
     for row in range(ious.shape[0]):
-        best_iou, best_idx = ious[row].max(dim=0)
+        label_matches = target_labels == pred_labels[order[row]]
+        class_ious = torch.where(label_matches, ious[row], torch.zeros_like(ious[row]))
+        best_iou, best_idx = class_ious.max(dim=0)
         if best_iou >= iou_threshold and not matched_targets[best_idx]:
             matched_targets[best_idx] = True
             tp += 1

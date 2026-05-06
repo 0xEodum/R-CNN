@@ -110,13 +110,18 @@ class FasterRCNN(nn.Module):
         for image_proposals in proposals:
             count = image_proposals.shape[0]
             end = start + count
-            image_scores = probabilities[start:end, 1]
-            image_boxes = decode_boxes(box_deltas[start:end, 1], image_proposals)
-            image_boxes = clip_boxes_to_image(image_boxes, image_size)
-            keep = torch.where(image_scores >= self.score_thresh)[0]
-            image_boxes = image_boxes[keep]
-            image_scores = image_scores[keep]
-            if image_scores.numel() > 0:
+            boxes_per_class: list[torch.Tensor] = []
+            scores_per_class: list[torch.Tensor] = []
+            labels_per_class: list[torch.Tensor] = []
+            for class_index in range(1, self.num_classes):
+                image_scores = probabilities[start:end, class_index]
+                image_boxes = decode_boxes(box_deltas[start:end, class_index], image_proposals)
+                image_boxes = clip_boxes_to_image(image_boxes, image_size)
+                keep = torch.where(image_scores >= self.score_thresh)[0]
+                image_boxes = image_boxes[keep]
+                image_scores = image_scores[keep]
+                if image_scores.numel() == 0:
+                    continue
                 if self.postprocess_nms == "soft":
                     keep_nms, decayed_scores = soft_nms(
                         image_boxes,
@@ -124,17 +129,33 @@ class FasterRCNN(nn.Module):
                         iou_threshold=0.5,
                         score_threshold=self.score_thresh,
                     )
-                    image_scores = decayed_scores
+                    image_scores = decayed_scores[keep_nms]
                 else:
                     keep_nms = nms(image_boxes, image_scores, iou_threshold=0.5)
-                keep_nms = keep_nms[: self.detections_per_image]
+                    image_scores = image_scores[keep_nms]
                 image_boxes = image_boxes[keep_nms]
-                image_scores = image_scores[keep_nms]
+                boxes_per_class.append(image_boxes)
+                scores_per_class.append(image_scores)
+                labels_per_class.append(
+                    torch.full((image_scores.shape[0],), class_index, dtype=torch.int64, device=image_scores.device)
+                )
+            if boxes_per_class:
+                image_boxes = torch.cat(boxes_per_class, dim=0)
+                image_scores = torch.cat(scores_per_class, dim=0)
+                image_labels = torch.cat(labels_per_class, dim=0)
+                order = image_scores.argsort(descending=True)[: self.detections_per_image]
+                image_boxes = image_boxes[order]
+                image_scores = image_scores[order]
+                image_labels = image_labels[order]
+            else:
+                image_boxes = torch.empty((0, 4), dtype=image_proposals.dtype, device=image_proposals.device)
+                image_scores = torch.empty((0,), dtype=probabilities.dtype, device=probabilities.device)
+                image_labels = torch.empty((0,), dtype=torch.int64, device=probabilities.device)
             predictions.append(
                 {
                     "boxes": image_boxes,
                     "scores": image_scores,
-                    "labels": torch.ones((image_scores.shape[0],), dtype=torch.int64, device=image_scores.device),
+                    "labels": image_labels,
                 }
             )
             start = end

@@ -70,3 +70,26 @@ def test_detector_head_samples_balanced_positive_and_negative_rois() -> None:
     assert int((labels[sampled] == 1).sum()) == 2
     assert int((labels[sampled] == 0).sum()) == 2
     assert not torch.any(labels[sampled] == -1)
+
+
+def test_detector_head_assigns_matched_target_classes_for_multiclass_data() -> None:
+    head = DetectorHead(in_channels=4, pooled_size=(2, 2), hidden_dim=16, num_classes=6)
+    proposals = [
+        torch.tensor(
+            [
+                [0.0, 0.0, 10.0, 10.0],
+                [20.0, 20.0, 30.0, 30.0],
+                [80.0, 80.0, 90.0, 90.0],
+            ]
+        )
+    ]
+    targets = [
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]]),
+            "labels": torch.tensor([2, 5], dtype=torch.int64),
+        }
+    ]
+
+    labels, _ = head._assign_targets(proposals, targets, device=torch.device("cpu"))
+
+    assert torch.equal(labels, torch.tensor([2, 5, 0]))

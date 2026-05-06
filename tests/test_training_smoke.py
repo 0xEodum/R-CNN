@@ -41,11 +41,13 @@ def test_build_model_applies_tunable_proposal_parameters() -> None:
             "detector_bg_iou_thresh": 0.1,
             "detector_batch_size_per_image": 64,
             "detector_positive_fraction": 0.5,
+            "num_classes": 6,
         },
     )()
 
     model = build_model(args)
 
+    assert model.num_classes == 6
     assert model.backbone.out_channels == 32
     assert model.backbone.stride == 8
     assert model.rpn.pre_nms_top_n == 111

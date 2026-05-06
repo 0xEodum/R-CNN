@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from src.data.gwhd_dataset import GWHDDetectionDataset, collate_detection_batch
+from src.data.gwhd_dataset import build_detection_dataset, collate_detection_batch
 from src.infer import load_model_from_checkpoint
 from src.train import evaluate_model, resolve_device
 
@@ -23,7 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a saved detector checkpoint on a GWHD split.")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, default=Path("../gwhd_2021"))
-    parser.add_argument("--split", choices=("train", "val", "test"), default="val")
+    parser.add_argument("--dataset-format", choices=("auto", "gwhd", "yolo"), default="auto")
+    parser.add_argument("--split", choices=("train", "val", "valid", "test"), default="val")
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -37,7 +38,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_loader(args: argparse.Namespace, device: torch.device) -> DataLoader:
-    dataset = GWHDDetectionDataset(args.data_root, split=args.split, image_size=args.image_size)
+    dataset = build_detection_dataset(
+        args.data_root,
+        split=args.split,
+        image_size=args.image_size,
+        dataset_format=args.dataset_format,
+    )
     num_workers = max(0, int(args.num_workers))
     kwargs: dict[str, object] = {
         "batch_size": args.batch_size,

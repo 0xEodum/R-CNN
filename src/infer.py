@@ -12,7 +12,7 @@ from src.train import resolve_device
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run wheat-head detection on one image.")
+    parser = argparse.ArgumentParser(description="Run detection on one image.")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--output-image", type=Path, required=True)
@@ -63,12 +63,13 @@ def draw_detections(
     draw = ImageDraw.Draw(canvas)
     boxes = prediction["boxes"].detach().cpu()
     scores = prediction["scores"].detach().cpu()
-    for box, score in zip(boxes, scores, strict=True):
+    labels = prediction.get("labels", torch.ones((boxes.shape[0],), dtype=torch.int64)).detach().cpu()
+    for box, score, label in zip(boxes, scores, labels, strict=True):
         if score < score_threshold:
             continue
         x1, y1, x2, y2 = [float(value) for value in box.tolist()]
         draw.rectangle((x1, y1, x2, y2), outline=(255, 48, 48), width=3)
-        draw.text((x1, max(0.0, y1 - 12.0)), f"{float(score):.2f}", fill=(255, 48, 48))
+        draw.text((x1, max(0.0, y1 - 12.0)), f"{int(label)} {float(score):.2f}", fill=(255, 48, 48))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output_path)
 
@@ -97,8 +98,13 @@ def run_inference(args: argparse.Namespace) -> dict[str, object]:
         "image": str(args.image),
         "checkpoint": str(args.checkpoint),
         "detections": [
-            {"box": [round(float(v), 3) for v in box.tolist()], "score": round(float(score), 6)}
-            for box, score in zip(prediction["boxes"][keep].detach().cpu(), prediction["scores"][keep].detach().cpu(), strict=True)
+            {"box": [round(float(v), 3) for v in box.tolist()], "score": round(float(score), 6), "label": int(label)}
+            for box, score, label in zip(
+                prediction["boxes"][keep].detach().cpu(),
+                prediction["scores"][keep].detach().cpu(),
+                prediction["labels"][keep].detach().cpu(),
+                strict=True,
+            )
         ],
     }
     if args.output_json is not None:

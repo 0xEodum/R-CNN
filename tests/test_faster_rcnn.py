@@ -63,3 +63,20 @@ def test_faster_rcnn_supports_soft_nms_postprocessing() -> None:
 
     assert model.postprocess_nms == "soft"
     assert len(predictions) == 1
+
+
+def test_faster_rcnn_postprocess_returns_multiclass_labels() -> None:
+    model = FasterRCNN(num_classes=4, backbone_channels=16, hidden_dim=32, rpn_pre_nms_top_n=20, rpn_post_nms_top_n=5)
+    proposals = [torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]])]
+    class_logits = torch.tensor(
+        [
+            [0.0, 0.1, 5.0, 0.2],
+            [0.0, 0.1, 0.2, 5.0],
+        ]
+    )
+    box_deltas = torch.zeros((2, 4, 4))
+
+    predictions = model._postprocess_predictions(class_logits, box_deltas, proposals, image_size=(64, 64))
+
+    assert torch.equal(predictions[0]["labels"], torch.tensor([2, 3]))
+    assert predictions[0]["scores"][0] >= predictions[0]["scores"][1]

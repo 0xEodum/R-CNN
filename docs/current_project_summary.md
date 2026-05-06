@@ -24,6 +24,24 @@ Format:
 - This is a single-class detection problem: wheat heads.
 - Images are 1024x1024 originally; current best training uses `image_size=256`.
 
+### Coffee Dataset Sprint
+
+New dataset root:
+
+```text
+D:\Study_tasks\NN_Img\coffee
+```
+
+Format:
+
+- Split directories are `train`, `valid`, and `test`.
+- Each split contains `images/` and `labels/`.
+- `data.yaml` declares five foreground classes: `dry`, `overripe`, `ripe`, `semi_ripe`, `unripe`.
+- Label files use YOLO-style normalized annotations. Polygon rows are converted to axis-aligned `xyxy` boxes by taking the min/max polygon coordinates.
+- Detector label `0` remains background. Coffee foreground labels are offset by one: `dry=1`, `overripe=2`, `ripe=3`, `semi_ripe=4`, `unripe=5`.
+- Images are already `640x640`; training can still use `--image-size` to resize and scale boxes.
+- The CLI can auto-detect this layout from `data.yaml`, or it can be made explicit with `--dataset-format yolo`.
+
 Observed split scale:
 
 | Split | Images | Empty Images | Mean Boxes/Image | Max Boxes |
@@ -419,6 +437,59 @@ The rendered sample produced `52` detections at score threshold `0.3` and `34` d
   --eval-score-thresh 0.3 `
   --run-dir runs\stride8_roi_sampler_pos50_256_lr1e3_full_epoch `
   --metrics-csv runs\stride8_roi_sampler_pos50_256_lr1e3_full_epoch\metrics.csv `
+  --device auto `
+  --sync-timing `
+  --backbone-stride 8 `
+  --rpn-post-nms-top-n 300 `
+  --detections-per-image 180 `
+  --anchor-sizes 8,16,32,64 `
+  --lr 1e-3 `
+  --detector-positive-fraction 0.5
+```
+
+### Smoke train on the coffee dataset
+
+```powershell
+.\.venv\Scripts\python.exe -m src.train `
+  --data-root ..\coffee `
+  --dataset-format yolo `
+  --image-size 256 `
+  --batch-size 1 `
+  --max-steps 1 `
+  --num-workers 0 `
+  --log-interval 1 `
+  --run-dir runs\coffee_smoke `
+  --metrics-csv runs\coffee_smoke\metrics.csv `
+  --device cpu `
+  --backbone-channels 16 `
+  --hidden-dim 32 `
+  --rpn-pre-nms-top-n 30 `
+  --rpn-post-nms-top-n 8 `
+  --detections-per-image 20 `
+  --anchor-sizes 8,16,32 `
+  --backbone-stride 8 `
+  --train-limit 2 `
+  --no-shuffle
+```
+
+### Start a comparable coffee training run
+
+```powershell
+.\.venv\Scripts\python.exe -m src.train `
+  --data-root ..\coffee `
+  --dataset-format yolo `
+  --image-size 256 `
+  --batch-size 1 `
+  --max-steps 1200 `
+  --num-workers 4 `
+  --prefetch-factor 2 `
+  --log-interval 100 `
+  --eval-interval 200 `
+  --val-max-batches 50 `
+  --eval-iou-thresh 0.3 `
+  --eval-score-thresh 0.3 `
+  --run-dir runs\coffee_stride8_256_lr1e3 `
+  --metrics-csv runs\coffee_stride8_256_lr1e3\metrics.csv `
   --device auto `
   --sync-timing `
   --backbone-stride 8 `

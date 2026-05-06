@@ -56,3 +56,19 @@ def test_empty_predictions_are_naive_zero_recall() -> None:
     assert metrics["precision"] == 0.0
     assert metrics["recall"] == 0.0
     assert metrics["f1"] == 0.0
+
+
+def test_match_image_detections_requires_matching_class_labels() -> None:
+    prediction = {
+        "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]]),
+        "scores": torch.tensor([0.9, 0.8]),
+        "labels": torch.tensor([2, 1], dtype=torch.int64),
+    }
+    target = {
+        "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]]),
+        "labels": torch.tensor([1, 1], dtype=torch.int64),
+    }
+
+    stats = match_image_detections(prediction, target, iou_threshold=0.5, score_threshold=0.1)
+
+    assert stats == DetectionStats(tp=1, fp=1, fn=1)

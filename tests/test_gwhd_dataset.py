@@ -6,8 +6,12 @@ from PIL import Image
 
 from src.data.gwhd_dataset import (
     GWHDDetectionDataset,
+    YOLOPolygonDetectionDataset,
+    build_detection_dataset,
     collate_detection_batch,
     parse_boxes_string,
+    parse_yolo_annotation_line,
+    read_yolo_class_names,
 )
 
 
@@ -89,3 +93,52 @@ def test_collate_detection_batch_keeps_variable_targets() -> None:
 
     assert images.shape == (2, 3, 8, 8)
     assert [target["boxes"].shape[0] for target in targets] == [1, 3]
+
+
+def test_parse_yolo_annotation_line_converts_polygon_to_pixel_box() -> None:
+    parsed = parse_yolo_annotation_line("2 0.25 0.50 0.75 0.50 0.75 1.0 0.25 1.0", image_width=640, image_height=640)
+
+    assert parsed is not None
+    label, box = parsed
+    assert label == 3
+    assert torch.equal(box, torch.tensor([160.0, 320.0, 480.0, 640.0]))
+
+
+def test_yolo_polygon_dataset_loads_split_labels_and_class_names(tmp_path: Path) -> None:
+    data_root = tmp_path / "coffee"
+    images_dir = data_root / "train" / "images"
+    labels_dir = data_root / "train" / "labels"
+    images_dir.mkdir(parents=True)
+    labels_dir.mkdir(parents=True)
+    Image.new("RGB", (640, 640), color=(12, 34, 56)).save(images_dir / "sample.jpg")
+    (labels_dir / "sample.txt").write_text(
+        "0 0.1 0.1 0.3 0.1 0.3 0.4 0.1 0.4\n"
+        "4 0.5 0.5 0.9 0.5 0.9 0.9 0.5 0.9\n",
+        encoding="utf-8",
+    )
+    (data_root / "data.yaml").write_text(
+        "nc: 5\nnames: ['dry', 'overripe', 'ripe', 'semi_ripe', 'unripe']\n",
+        encoding="utf-8",
+    )
+
+    dataset = YOLOPolygonDetectionDataset(data_root, split="train", image_size=320)
+    image, target = dataset[0]
+
+    assert read_yolo_class_names(data_root) == ("dry", "overripe", "ripe", "semi_ripe", "unripe")
+    assert image.shape == (3, 320, 320)
+    assert torch.allclose(target["boxes"], torch.tensor([[32.0, 32.0, 96.0, 128.0], [160.0, 160.0, 288.0, 288.0]]))
+    assert torch.equal(target["labels"], torch.tensor([1, 5], dtype=torch.int64))
+
+
+def test_build_detection_dataset_auto_detects_yolo_layout(tmp_path: Path) -> None:
+    data_root = tmp_path / "coffee"
+    (data_root / "valid" / "images").mkdir(parents=True)
+    (data_root / "valid" / "labels").mkdir(parents=True)
+    Image.new("RGB", (640, 640), color=(255, 255, 255)).save(data_root / "valid" / "images" / "sample.jpg")
+    (data_root / "valid" / "labels" / "sample.txt").write_text("", encoding="utf-8")
+    (data_root / "data.yaml").write_text("nc: 1\nnames: ['dry']\n", encoding="utf-8")
+
+    dataset = build_detection_dataset(data_root, split="val", image_size=640, dataset_format="auto")
+
+    assert isinstance(dataset, YOLOPolygonDetectionDataset)
+    assert len(dataset) == 1

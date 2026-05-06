@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 
-from src.data.gwhd_dataset import GWHDDetectionDataset, collate_detection_batch
+from src.data.gwhd_dataset import build_detection_dataset, collate_detection_batch, read_yolo_class_names
 from src.eval import evaluate_predictions
 from src.models.faster_rcnn import FasterRCNN
 
@@ -19,7 +19,8 @@ from src.models.faster_rcnn import FasterRCNN
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the scratch Faster R-CNN model on GWHD.")
     parser.add_argument("--data-root", type=Path, default=Path("../gwhd_2021"))
-    parser.add_argument("--split", choices=("train", "val", "test"), default="train")
+    parser.add_argument("--dataset-format", choices=("auto", "gwhd", "yolo"), default="auto")
+    parser.add_argument("--split", choices=("train", "val", "valid", "test"), default="train")
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=1)
@@ -41,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backbone-channels", type=int, default=128)
     parser.add_argument("--backbone-stride", type=int, choices=(8, 16), default=16)
     parser.add_argument("--hidden-dim", type=int, default=256)
+    parser.add_argument("--num-classes", type=int, default=0, help="Total detector classes including background; 0 auto-detects.")
     parser.add_argument("--rpn-pre-nms-top-n", type=int, default=600)
     parser.add_argument("--rpn-post-nms-top-n", type=int, default=100)
     parser.add_argument("--detections-per-image", type=int, default=100)
@@ -106,6 +108,7 @@ def parse_anchor_sizes(value: str) -> tuple[int, ...]:
 
 def model_config_from_args(args: argparse.Namespace) -> dict[str, object]:
     return {
+        "num_classes": resolve_num_classes(args),
         "backbone_channels": args.backbone_channels,
         "backbone_stride": args.backbone_stride,
         "hidden_dim": args.hidden_dim,
@@ -126,6 +129,19 @@ def model_config_from_args(args: argparse.Namespace) -> dict[str, object]:
 
 def build_model(args: argparse.Namespace) -> FasterRCNN:
     return FasterRCNN(**model_config_from_args(args))
+
+
+def resolve_num_classes(args: argparse.Namespace) -> int:
+    explicit = int(getattr(args, "num_classes", 0))
+    if explicit > 0:
+        return explicit
+    dataset_format = getattr(args, "dataset_format", "gwhd")
+    data_root = Path(getattr(args, "data_root", "../gwhd_2021"))
+    if dataset_format in {"auto", "yolo"} and (data_root / "data.yaml").exists():
+        class_names = read_yolo_class_names(data_root)
+        if class_names:
+            return len(class_names) + 1
+    return 2
 
 
 def save_checkpoint(
@@ -313,17 +329,23 @@ def evaluate_model(
 
 def train_one_smoke_step(args: argparse.Namespace) -> dict[str, float]:
     device = resolve_device(args.device)
-    dataset = GWHDDetectionDataset(
+    dataset = build_detection_dataset(
         args.data_root,
         split=args.split,
         image_size=args.image_size,
         hflip_prob=args.hflip_prob,
+        dataset_format=args.dataset_format,
     )
     dataset = limit_dataset(dataset, args.train_limit)
     loader = create_data_loader(dataset, args=args, device=device)
     val_loader = None
     if args.eval_interval > 0:
-        val_dataset = GWHDDetectionDataset(args.data_root, split="val", image_size=args.image_size)
+        val_dataset = build_detection_dataset(
+            args.data_root,
+            split="val",
+            image_size=args.image_size,
+            dataset_format=args.dataset_format,
+        )
         val_args = copy.copy(args)
         val_args.shuffle = False
         val_loader = create_data_loader(val_dataset, args=val_args, device=device)
