@@ -25,21 +25,26 @@ class ConvBlock(nn.Module):
 
 
 class SmallBackbone(nn.Module):
-    stride = 16
-
-    def __init__(self, out_channels: int = 128) -> None:
+    def __init__(self, out_channels: int = 128, output_stride: int = 16) -> None:
         super().__init__()
+        if output_stride not in {8, 16}:
+            raise ValueError("SmallBackbone output_stride must be 8 or 16")
         mid1 = max(32, out_channels // 4)
         mid2 = max(48, out_channels // 2)
         self.out_channels = out_channels
-        self.body = nn.Sequential(
+        self.stride = output_stride
+        blocks: list[nn.Module] = [
             ConvBlock(3, mid1, stride=2),
             ConvBlock(mid1, mid1, stride=1),
             ConvBlock(mid1, mid2, stride=2),
             ConvBlock(mid2, mid2, stride=1),
             ConvBlock(mid2, out_channels, stride=2),
-            ConvBlock(out_channels, out_channels, stride=2),
-        )
+        ]
+        if output_stride == 16:
+            blocks.append(ConvBlock(out_channels, out_channels, stride=2))
+        else:
+            blocks.append(ConvBlock(out_channels, out_channels, stride=1))
+        self.body = nn.Sequential(*blocks)
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         return self.body(images)

@@ -27,19 +27,23 @@ def test_build_model_applies_tunable_proposal_parameters() -> None:
         (),
         {
             "backbone_channels": 32,
+            "backbone_stride": 8,
             "hidden_dim": 64,
             "rpn_pre_nms_top_n": 111,
             "rpn_post_nms_top_n": 22,
             "anchor_sizes": "16,32",
             "score_thresh": 0.25,
             "detections_per_image": 33,
+            "postprocess_nms": "soft",
         },
     )()
 
     model = build_model(args)
 
     assert model.backbone.out_channels == 32
+    assert model.backbone.stride == 8
     assert model.rpn.pre_nms_top_n == 111
     assert model.rpn.post_nms_top_n == 22
     assert model.rpn.anchor_generator.sizes == (16, 32)
     assert model.score_thresh == 0.25
+    assert model.postprocess_nms == "soft"

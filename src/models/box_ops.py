@@ -100,3 +100,37 @@ def greedy_nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) 
         order = order[1:][ious <= iou_threshold]
 
     return torch.stack(keep).to(dtype=torch.long)
+
+
+def soft_nms(
+    boxes: torch.Tensor,
+    scores: torch.Tensor,
+    iou_threshold: float,
+    score_threshold: float,
+    sigma: float = 0.5,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if boxes.numel() == 0:
+        return (
+            torch.empty((0,), dtype=torch.long, device=boxes.device),
+            torch.empty((0,), dtype=scores.dtype, device=scores.device),
+        )
+
+    working_scores = scores.clone()
+    order = working_scores.argsort(descending=True)
+    keep: list[torch.Tensor] = []
+    while order.numel() > 0:
+        current = order[0]
+        keep.append(current)
+        if order.numel() == 1:
+            break
+        remaining = order[1:]
+        ious = box_iou(boxes[current].unsqueeze(0), boxes[remaining]).squeeze(0)
+        decay = torch.ones_like(ious)
+        overlap = ious > iou_threshold
+        decay[overlap] = torch.exp(-((ious[overlap] * ious[overlap]) / sigma))
+        working_scores[remaining] = working_scores[remaining] * decay
+        remaining = remaining[working_scores[remaining] >= score_threshold]
+        order = remaining[working_scores[remaining].argsort(descending=True)]
+
+    keep_tensor = torch.stack(keep).to(dtype=torch.long)
+    return keep_tensor, working_scores

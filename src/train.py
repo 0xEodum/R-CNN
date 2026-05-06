@@ -39,11 +39,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-score-thresh", type=float, default=0.2)
     parser.add_argument("--eval-iou-thresh", type=float, default=0.3)
     parser.add_argument("--backbone-channels", type=int, default=128)
+    parser.add_argument("--backbone-stride", type=int, choices=(8, 16), default=16)
     parser.add_argument("--hidden-dim", type=int, default=256)
     parser.add_argument("--rpn-pre-nms-top-n", type=int, default=600)
     parser.add_argument("--rpn-post-nms-top-n", type=int, default=100)
     parser.add_argument("--detections-per-image", type=int, default=100)
     parser.add_argument("--anchor-sizes", default="16,32,64")
+    parser.add_argument("--postprocess-nms", choices=("hard", "soft"), default="hard")
     parser.add_argument("--train-limit", type=int, default=0)
     parser.add_argument("--no-shuffle", action="store_true")
     return parser.parse_args()
@@ -98,12 +100,14 @@ def parse_anchor_sizes(value: str) -> tuple[int, ...]:
 def model_config_from_args(args: argparse.Namespace) -> dict[str, object]:
     return {
         "backbone_channels": args.backbone_channels,
+        "backbone_stride": args.backbone_stride,
         "hidden_dim": args.hidden_dim,
         "rpn_pre_nms_top_n": args.rpn_pre_nms_top_n,
         "rpn_post_nms_top_n": args.rpn_post_nms_top_n,
         "anchor_sizes": parse_anchor_sizes(args.anchor_sizes),
         "score_thresh": args.score_thresh,
         "detections_per_image": args.detections_per_image,
+        "postprocess_nms": args.postprocess_nms,
     }
 
 

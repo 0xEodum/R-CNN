@@ -7,6 +7,7 @@ from src.models.box_ops import (
     encode_boxes,
     greedy_nms,
     nms,
+    soft_nms,
 )
 
 
@@ -64,3 +65,20 @@ def test_fused_nms_matches_greedy_fallback_on_cpu() -> None:
     scores = torch.tensor([0.9, 0.8, 0.7, 0.95])
 
     assert torch.equal(nms(boxes, scores, 0.3), greedy_nms(boxes, scores, 0.3))
+
+
+def test_soft_nms_keeps_overlapping_boxes_with_decayed_scores() -> None:
+    boxes = torch.tensor(
+        [
+            [0.0, 0.0, 10.0, 10.0],
+            [1.0, 1.0, 11.0, 11.0],
+            [30.0, 30.0, 40.0, 40.0],
+        ]
+    )
+    scores = torch.tensor([0.9, 0.85, 0.7])
+
+    keep, decayed_scores = soft_nms(boxes, scores, iou_threshold=0.5, score_threshold=0.05)
+
+    assert keep.shape[0] == 3
+    assert 1 in keep.tolist()
+    assert decayed_scores[keep == 1].item() < 0.85

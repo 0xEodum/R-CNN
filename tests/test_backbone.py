@@ -12,6 +12,16 @@ def test_small_backbone_returns_stride_16_features() -> None:
     assert features.shape == (2, 64, 16, 16)
 
 
+def test_small_backbone_can_return_stride_8_features_for_small_objects() -> None:
+    model = SmallBackbone(out_channels=64, output_stride=8)
+    images = torch.randn(2, 3, 256, 256)
+
+    features = model(images)
+
+    assert model.stride == 8
+    assert features.shape == (2, 64, 32, 32)
+
+
 def test_small_backbone_allows_backward_pass() -> None:
     model = SmallBackbone(out_channels=32)
     images = torch.randn(1, 3, 128, 128, requires_grad=True)

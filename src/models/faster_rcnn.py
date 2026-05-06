@@ -5,7 +5,7 @@ from torch import nn
 
 from src.models.anchors import AnchorGenerator
 from src.models.backbone import SmallBackbone
-from src.models.box_ops import clip_boxes_to_image, decode_boxes, nms
+from src.models.box_ops import clip_boxes_to_image, decode_boxes, nms, soft_nms
 from src.models.detector_head import DetectorHead
 from src.models.roi_pool import RoIAlignPool
 from src.models.rpn import RegionProposalNetwork
@@ -16,15 +16,19 @@ class FasterRCNN(nn.Module):
         self,
         num_classes: int = 2,
         backbone_channels: int = 128,
+        backbone_stride: int = 16,
         hidden_dim: int = 256,
         rpn_pre_nms_top_n: int = 600,
         rpn_post_nms_top_n: int = 100,
         anchor_sizes: tuple[int, ...] = (16, 32, 64),
         score_thresh: float = 0.05,
         detections_per_image: int = 50,
+        postprocess_nms: str = "hard",
     ) -> None:
         super().__init__()
-        self.backbone = SmallBackbone(out_channels=backbone_channels)
+        if postprocess_nms not in {"hard", "soft"}:
+            raise ValueError("postprocess_nms must be 'hard' or 'soft'")
+        self.backbone = SmallBackbone(out_channels=backbone_channels, output_stride=backbone_stride)
         anchor_generator = AnchorGenerator(sizes=anchor_sizes, stride=self.backbone.stride)
         self.rpn = RegionProposalNetwork(
             in_channels=backbone_channels,
@@ -43,6 +47,7 @@ class FasterRCNN(nn.Module):
         self.num_classes = num_classes
         self.score_thresh = score_thresh
         self.detections_per_image = detections_per_image
+        self.postprocess_nms = postprocess_nms
 
     def forward(
         self,
@@ -100,7 +105,17 @@ class FasterRCNN(nn.Module):
             image_boxes = image_boxes[keep]
             image_scores = image_scores[keep]
             if image_scores.numel() > 0:
-                keep_nms = nms(image_boxes, image_scores, iou_threshold=0.5)[: self.detections_per_image]
+                if self.postprocess_nms == "soft":
+                    keep_nms, decayed_scores = soft_nms(
+                        image_boxes,
+                        image_scores,
+                        iou_threshold=0.5,
+                        score_threshold=self.score_thresh,
+                    )
+                    image_scores = decayed_scores
+                else:
+                    keep_nms = nms(image_boxes, image_scores, iou_threshold=0.5)
+                keep_nms = keep_nms[: self.detections_per_image]
                 image_boxes = image_boxes[keep_nms]
                 image_scores = image_scores[keep_nms]
             predictions.append(
