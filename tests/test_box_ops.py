@@ -5,6 +5,7 @@ from src.models.box_ops import (
     clip_boxes_to_image,
     decode_boxes,
     encode_boxes,
+    greedy_nms,
     nms,
 )
 
@@ -49,3 +50,17 @@ def test_nms_keeps_highest_scoring_non_overlapping_boxes() -> None:
     keep = nms(boxes, scores, iou_threshold=0.5)
 
     assert torch.equal(keep, torch.tensor([1, 2]))
+
+
+def test_fused_nms_matches_greedy_fallback_on_cpu() -> None:
+    boxes = torch.tensor(
+        [
+            [0.0, 0.0, 10.0, 10.0],
+            [1.0, 1.0, 11.0, 11.0],
+            [12.0, 12.0, 20.0, 20.0],
+            [50.0, 50.0, 60.0, 60.0],
+        ]
+    )
+    scores = torch.tensor([0.9, 0.8, 0.7, 0.95])
+
+    assert torch.equal(nms(boxes, scores, 0.3), greedy_nms(boxes, scores, 0.3))

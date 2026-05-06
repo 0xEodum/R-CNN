@@ -1,6 +1,7 @@
 import torch
 
 from src.models.faster_rcnn import FasterRCNN
+from src.train import build_model
 
 
 def test_one_optimizer_step_updates_at_least_one_parameter() -> None:
@@ -18,3 +19,27 @@ def test_one_optimizer_step_updates_at_least_one_parameter() -> None:
 
     changed = [not torch.equal(before[name], param.detach()) for name, param in model.named_parameters()]
     assert any(changed)
+
+
+def test_build_model_applies_tunable_proposal_parameters() -> None:
+    args = type(
+        "Args",
+        (),
+        {
+            "backbone_channels": 32,
+            "hidden_dim": 64,
+            "rpn_pre_nms_top_n": 111,
+            "rpn_post_nms_top_n": 22,
+            "anchor_sizes": "16,32",
+            "score_thresh": 0.25,
+            "detections_per_image": 33,
+        },
+    )()
+
+    model = build_model(args)
+
+    assert model.backbone.out_channels == 32
+    assert model.rpn.pre_nms_top_n == 111
+    assert model.rpn.post_nms_top_n == 22
+    assert model.rpn.anchor_generator.sizes == (16, 32)
+    assert model.score_thresh == 0.25

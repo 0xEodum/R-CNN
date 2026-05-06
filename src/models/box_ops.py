@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import torch
 
+try:
+    from torchvision.ops import nms as _torchvision_nms
+except Exception:
+    _torchvision_nms = None
+
 
 def box_area(boxes: torch.Tensor) -> torch.Tensor:
     return (boxes[:, 2] - boxes[:, 0]).clamp(min=0) * (boxes[:, 3] - boxes[:, 1]).clamp(min=0)
@@ -75,6 +80,12 @@ def remove_small_boxes(boxes: torch.Tensor, min_size: float) -> torch.Tensor:
 
 
 def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torch.Tensor:
+    if _torchvision_nms is not None:
+        return _torchvision_nms(boxes, scores, iou_threshold)
+    return greedy_nms(boxes, scores, iou_threshold)
+
+
+def greedy_nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torch.Tensor:
     if boxes.numel() == 0:
         return torch.empty((0,), dtype=torch.long, device=boxes.device)
 

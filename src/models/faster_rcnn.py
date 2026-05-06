@@ -19,12 +19,13 @@ class FasterRCNN(nn.Module):
         hidden_dim: int = 256,
         rpn_pre_nms_top_n: int = 600,
         rpn_post_nms_top_n: int = 100,
+        anchor_sizes: tuple[int, ...] = (16, 32, 64),
         score_thresh: float = 0.05,
         detections_per_image: int = 50,
     ) -> None:
         super().__init__()
         self.backbone = SmallBackbone(out_channels=backbone_channels)
-        anchor_generator = AnchorGenerator(stride=self.backbone.stride)
+        anchor_generator = AnchorGenerator(sizes=anchor_sizes, stride=self.backbone.stride)
         self.rpn = RegionProposalNetwork(
             in_channels=backbone_channels,
             anchor_generator=anchor_generator,
